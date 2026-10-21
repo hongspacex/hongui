@@ -1,0 +1,7 @@
+# Main site (hongui-site) — set with: npx wrangler secret put NAME
+ADMIN_USER=
+ADMIN_SECRET=
+SESSION_SECRET=
+AI_KEY_GENERAL=
+AI_KEY_IMAGE=
+TURNSTILE_SECRET=

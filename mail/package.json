@@ -1,0 +1,9 @@
+{
+  "name": "hongui-mail",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "postal-mime": "^2.4.3",
+    "puppeteer-core": "^24.43.1"
+  }
+}

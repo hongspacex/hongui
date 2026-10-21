@@ -1,0 +1,33 @@
+name = "hongui-mail"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+# account_id = "YOUR_ACCOUNT_ID"
+routes = [
+  { pattern = "mail.example.com", custom_domain = true }
+]
+
+[[r2_buckets]]
+binding = "MAIL_BUCKET"
+bucket_name = "your-mail-bucket"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "your-mail-db"
+database_id = "YOUR_D1_DATABASE_ID"
+
+[triggers]
+crons = ["15 * * * *"]
+
+[[rules]]
+type = "Text"
+globs = ["**/*.html"]
+fallthrough = true
+
+[[rules]]
+type = "Text"
+globs = ["**/app.js"]
+fallthrough = true
+
+[vars]
+CF_ZONE_ID = "YOUR_ZONE_ID"

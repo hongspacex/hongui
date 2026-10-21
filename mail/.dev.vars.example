@@ -1,0 +1,2 @@
+# Mail worker (hongui-mail) — set with: npx wrangler secret put NAME
+CF_API_TOKEN=   # Cloudflare API token with Email Routing:Edit on the zone

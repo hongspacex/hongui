@@ -1,0 +1,23 @@
+name = "hongui-site"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+workers_dev = true
+# account_id = "YOUR_ACCOUNT_ID"
+routes = [
+  { pattern = "example.com", custom_domain = true },
+  { pattern = "www.example.com", custom_domain = true },
+  { pattern = "ai.example.com", custom_domain = true }
+]
+
+[[kv_namespaces]]
+binding = "one"            # keep this binding name
+id = "YOUR_KV_NAMESPACE_ID"
+
+[[r2_buckets]]
+binding = "first"          # keep this binding name
+bucket_name = "your-drive-bucket"
+
+[vars]
+TURNSTILE_SITEKEY = "1x00000000000000000000AA"  # replace with your Turnstile site key (public)
+
+# Secrets: npx wrangler secret put <NAME>  (see .dev.vars.example)
