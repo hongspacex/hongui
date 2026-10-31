@@ -3,11 +3,15 @@ import pageHtml from './page.html';
 import appJs from './app.js';
 
 const DOMAIN = 'hongspaces.com';
-const RESERVED = new Set(['admin','postmaster','abuse','webmaster','root','mail','support','noreply','no-reply','www','api','static','cdn','test','null','undefined']);
+const RESERVED = new Set(['admin','postmaster','abuse','webmaster','root','mail','support','noreply','no-reply','www','api','static','cdn','test','null','undefined','one','verify','verification','otp','code','auth','login','confirm','confirmation','activate','activation','signup','register','security','2fa','mfa','captcha','notify','notification','notifications','alert','alerts','mailer','bounce']);
 const MAX_RAW = 1_500_000;
 const MAX_MAILBOX_MSGS = 80;
 const MAX_PREVIEW = 180;
 const TTL_MS = 24 * 60 * 60 * 1000;
+/** Local-parts starting with this prefix (case-insensitive) never auto-expire or auto-delete. */
+const PERMANENT_PREFIX = 'hong';
+/** Far-future expires_at sentinel (~year 275760); purge also filters by prefix. */
+const PERMANENT_EXPIRES_AT = 8640000000000000;
 const RATE = {
   // claim: unlimited per user request (no create throttling)
   api: { n: 300, w: 60_000 },
@@ -50,6 +54,15 @@ async function rateLimit(env, key, lim) {
   if (row.count >= lim.n) return false;
   await env.DB.prepare('UPDATE rate_limits SET count = count + 1 WHERE key = ?').bind(key).run();
   return true;
+}
+
+
+function isPermanentLocal(local) {
+  return String(local || '').toLowerCase().startsWith(PERMANENT_PREFIX);
+}
+
+function mailboxExpiresAt(local, now = Date.now()) {
+  return isPermanentLocal(local) ? PERMANENT_EXPIRES_AT : now + TTL_MS;
 }
 
 function normalizeLocal(raw) {
@@ -101,7 +114,7 @@ async function ensureMailbox(env, local) {
   if (!box) {
     await env.DB.prepare(
       'INSERT INTO mailboxes (local, pin_hash, pin_salt, token_hash, created_at, last_access, expires_at) VALUES (?, NULL, NULL, NULL, ?, ?, ?)'
-    ).bind(local, now, now, now + TTL_MS).run();
+    ).bind(local, now, now, mailboxExpiresAt(local, now)).run();
     box = await env.DB.prepare('SELECT * FROM mailboxes WHERE local = ?').bind(local).first();
   }
   return box;
@@ -110,7 +123,7 @@ async function ensureMailbox(env, local) {
 async function touchMailbox(env, local) {
   const now = Date.now();
   await env.DB.prepare('UPDATE mailboxes SET last_access = ?, expires_at = ? WHERE local = ?')
-    .bind(now, now + TTL_MS, local).run();
+    .bind(now, mailboxExpiresAt(local, now), local).run();
 }
 
 function parseCookie(s) {
@@ -143,6 +156,12 @@ async function purgeExpired(env) {
   const now = Date.now();
   const old = await env.DB.prepare('SELECT local FROM mailboxes WHERE expires_at < ? LIMIT 200').bind(now).all();
   for (const row of old.results || []) {
+    if (isPermanentLocal(row.local)) {
+      // Repair any stale expires_at so cron never picks them up again
+      await env.DB.prepare('UPDATE mailboxes SET expires_at = ? WHERE local = ?')
+        .bind(PERMANENT_EXPIRES_AT, row.local).run();
+      continue;
+    }
     const msgs = await env.DB.prepare('SELECT id, r2_key FROM messages WHERE local = ?').bind(row.local).all();
     for (const m of msgs.results || []) {
       try { await env.MAIL_BUCKET.delete(m.r2_key); } catch {}
@@ -151,8 +170,12 @@ async function purgeExpired(env) {
     await env.DB.prepare('DELETE FROM mailboxes WHERE local = ?').bind(row.local).run();
     try { await deleteEmailRoute(env, row.local); } catch {}
   }
-  const stale = await env.DB.prepare('SELECT id, r2_key FROM messages WHERE received_at < ? LIMIT 300').bind(now - TTL_MS).all();
+  // Stale message sweep: keep mail belonging to permanent (Hong*) mailboxes
+  const stale = await env.DB.prepare(
+    'SELECT id, r2_key, local FROM messages WHERE received_at < ? LIMIT 300'
+  ).bind(now - TTL_MS).all();
   for (const m of stale.results || []) {
+    if (isPermanentLocal(m.local)) continue;
     try { await env.MAIL_BUCKET.delete(m.r2_key); } catch {}
     await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(m.id).run();
   }
@@ -182,7 +205,7 @@ async function readRaw(stream) {
 
 async function ensureEmailRoute(env, local) {
   const token = env.CF_API_TOKEN;
-  const zone = env.CF_ZONE_ID || '';
+  const zone = env.CF_ZONE_ID || '1dc40ba63f9c52c5a50352829426fd10';
   if (!token) return { skipped: true };
   const address = `${local}@${DOMAIN}`;
   // list existing rules (first page)
@@ -211,7 +234,7 @@ async function ensureEmailRoute(env, local) {
 
 async function deleteEmailRoute(env, local) {
   const token = env.CF_API_TOKEN;
-  const zone = env.CF_ZONE_ID || '';
+  const zone = env.CF_ZONE_ID || '1dc40ba63f9c52c5a50352829426fd10';
   if (!token) return;
   const address = `${local}@${DOMAIN}`;
   let page = 1;
@@ -401,14 +424,16 @@ export default {
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       ).bind(msgId, local, fromAddr, to, subject, now, raw.byteLength, r2Key, preview, parsed.html ? 1 : 0).run();
 
-      const cnt = await env.DB.prepare('SELECT COUNT(*) AS c FROM messages WHERE local = ?').bind(local).first();
-      if (cnt && cnt.c > MAX_MAILBOX_MSGS) {
-        const drop = await env.DB.prepare(
-          'SELECT id, r2_key FROM messages WHERE local = ? ORDER BY received_at ASC LIMIT ?'
-        ).bind(local, cnt.c - MAX_MAILBOX_MSGS).all();
-        for (const m of drop.results || []) {
-          try { await env.MAIL_BUCKET.delete(m.r2_key); } catch {}
-          await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(m.id).run();
+      if (!isPermanentLocal(local)) {
+        const cnt = await env.DB.prepare('SELECT COUNT(*) AS c FROM messages WHERE local = ?').bind(local).first();
+        if (cnt && cnt.c > MAX_MAILBOX_MSGS) {
+          const drop = await env.DB.prepare(
+            'SELECT id, r2_key FROM messages WHERE local = ? ORDER BY received_at ASC LIMIT ?'
+          ).bind(local, cnt.c - MAX_MAILBOX_MSGS).all();
+          for (const m of drop.results || []) {
+            try { await env.MAIL_BUCKET.delete(m.r2_key); } catch {}
+            await env.DB.prepare('DELETE FROM messages WHERE id = ?').bind(m.id).run();
+          }
         }
       }
       ctx.waitUntil(purgeExpired(env));
@@ -456,7 +481,7 @@ export default {
         const box = await ensureMailbox(env, local);
         await touchMailbox(env, local);
         const route = await ensureEmailRoute(env, local);
-        return json({ local, address: `${local}@${DOMAIN}`, protected: !!(box && box.pin_hash), ttlHours: 24, routed: !!(route && (route.ok || route.existed || route.skipped)) });
+        return json({ local, address: `${local}@${DOMAIN}`, protected: !!(box && box.pin_hash), ttlHours: isPermanentLocal(local) ? null : 24, permanent: isPermanentLocal(local), routed: !!(route && (route.ok || route.existed || route.skipped)) });
       }
 
       if (url.pathname === '/api/pin' && req.method === 'POST') {

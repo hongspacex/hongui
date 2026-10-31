@@ -61,6 +61,24 @@
     $('statusText').textContent = text;
   }
 
+
+  function isHongPermanent(local) {
+    return String(local || '').toLowerCase().startsWith('hong');
+  }
+
+  function applyTtlUi(local, claim) {
+    const permanent = !!(claim && claim.permanent) || isHongPermanent(local);
+    const pill = $('ttlPill');
+    const hint = $('ttlHint');
+    if (pill) pill.textContent = permanent ? 'Hong 前缀 · 永久保留' : '邮件保留约 24 小时';
+    if (hint) {
+      hint.textContent = permanent
+        ? '此前缀以 Hong 开头，邮箱与邮件永久保留，不会被定时清理。保留名（admin / postmaster / mail 等）仍不可用。'
+        : '保留名（admin / postmaster / mail 等）不可用。一般邮箱闲置约 24 小时后自动清理；前缀以 Hong 开头（不区分大小写）的邮箱永久保留。不会列出全部邮箱。';
+    }
+  }
+
+
   function fmtTime(ts) {
     try { return new Date(ts).toLocaleString('zh-CN', { hour12: false }); }
     catch { return ''; }
@@ -169,13 +187,15 @@
     const store = loadStore();
     const hash = decodeURIComponent((location.hash || '').replace(/^#/, ''));
     let local = hash || store.local;
+    let claim = null;
     if (!local) {
-      const data = await api('/api/claim', { method: 'POST', body: JSON.stringify({}) });
-      local = data.local;
-      rememberToken(local, data.token);
+      claim = await api('/api/claim', { method: 'POST', body: JSON.stringify({}) });
+      local = claim.local;
+      rememberToken(local, claim.token);
     }
     setLocal(local);
-    await api('/api/claim', { method: 'POST', body: JSON.stringify({ local }) });
+    claim = await api('/api/claim', { method: 'POST', body: JSON.stringify({ local }) });
+    applyTtlUi(local, claim);
     await refresh();
     clearInterval(state.timer);
     state.timer = setInterval(refresh, 5000);
@@ -196,6 +216,7 @@
     state.token = '';
     setLocal(data.local);
     rememberToken(data.local, data.token);
+    applyTtlUi(data.local, data);
     state.selected = null;
     $('reader').innerHTML = '<div class="empty">选择一封邮件查看</div>';
     toast('已新建邮箱');
@@ -207,9 +228,10 @@
   $('btnApplyCustom').onclick = async () => {
     const v = $('customInput').value.trim().toLowerCase().replace(/@.*/, '').replace(/[^a-z0-9._-]/g, '');
     try {
-      await api('/api/claim', { method: 'POST', body: JSON.stringify({ local: v }) });
+      const data = await api('/api/claim', { method: 'POST', body: JSON.stringify({ local: v }) });
       setLocal(v);
-      toast('已切换');
+      applyTtlUi(v, data);
+      toast(data.permanent ? '已切换（永久保留）' : '已切换');
       refresh();
     } catch (e) { toast(e.message || '前缀不可用'); }
   };

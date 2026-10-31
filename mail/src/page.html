@@ -90,7 +90,7 @@ a{color:var(--accent)}
 <div class="wrap">
   <div class="brand">
     <div class="logo"><b>HONGUI</b> MAIL</div>
-    <div class="pill">邮件保留约 24 小时</div>
+    <div class="pill" id="ttlPill">邮件保留约 24 小时</div>
   </div>
   <section class="card hero">
     <h1>临时邮箱</h1>
@@ -120,7 +120,7 @@ a{color:var(--accent)}
           <button id="btnUnlock" type="button">解锁</button>
         </div>
       </div>
-      <p class="hint">保留名（admin / postmaster / mail 等）不可用。邮箱闲置约 24 小时后自动清理。不会列出全部邮箱。</p>
+      <p class="hint" id="ttlHint">保留名（admin / postmaster / mail 等）不可用。一般邮箱闲置约 24 小时后自动清理；前缀以 Hong 开头（不区分大小写）的邮箱永久保留。不会列出全部邮箱。</p>
     </div>
   </section>
   <section class="grid">
